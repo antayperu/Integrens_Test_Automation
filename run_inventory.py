@@ -26,10 +26,6 @@ def main():
         if not login_flow.login():
             logger.error("Login failed or aborted. Exiting.")
             return
-
-        # 1.1 Post-Login: Select Sucursal
-        login_flow.select_sucursal_target()
-
         # 2. Inventory
         crawler = InventoryCrawler(driver)
         crawler.run()

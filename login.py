@@ -35,13 +35,26 @@ class LoginFlow:
             pass
 
         # 3. Manual CAPTCHA Pause
+        # 3. Manual CAPTCHA Pause
         print("\n" + "="*60)
         print("⚠️  ATENCIÓN REQUERIDA  ⚠️")
-        print(f"Por favor, resuelve el CAPTCHA en el navegador y haz click en LOGIN ({'#btn_access'}).")
-        print("Una vez que hayas ingresado exitosamente al sistema...")
+        print("1. Resuelve el CAPTCHA en el navegador.")
+        print("2. NO hagas click en Login todavía.")
+        print("3. Una vez escrito el CAPTCHA, vuelve aquí.")
         input("👉 PRESIONA ENTER PARA CONTINUAR...")
         print("="*60 + "\n")
 
+        # 3.1 Select Sucursal (Pre-Auth)
+        if not self.select_sucursal_target():
+             logger.error("Failed to select Sucursal. Aborting Login.")
+             return False
+
+        # 3.2 Click Login
+        logger.info("Clicking Login button...")
+        if not self.actions.click((By.CSS_SELECTOR, "#btn_access")):
+             logger.error("Failed to click Login button.")
+             return False
+        
         # 4. Validate Login
         return self._validate_login_success()
 
