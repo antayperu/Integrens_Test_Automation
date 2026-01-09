@@ -15,15 +15,16 @@ class InventoryCrawler:
         self.actions = SafeActions(driver)
         self.visited_ids = set() 
         self.inventory_data = []
-        # Main menu selector
-        self.menu_root_selector = (By.CSS_SELECTOR, "nav, #menu, .sidebar, ul.nav, #main-menu") 
+        # STRICT Scope: Sidebar / Aside
+        self.side_menu_selector = (By.CSS_SELECTOR, "aside, .sidebar, #sidebar-menu, #main-menu, .main-sidebar") 
 
     def run(self):
-        logger.info("Starting Inventory Crawl (Robust Dynamic Mode)...")
+        logger.info("Starting Inventory Crawl (Sidebar Scoped)...")
         if not self._ensure_menu_visible():
-             logger.error("Menu root not found at start. Aborting.")
+             logger.error("Sidebar not found. Aborting.")
              return []
         
+        # Start at Level 1
         self._crawl_level(parent_chain=[])
         
         save_inventory_json(self.inventory_data, "inventory.json")
@@ -32,46 +33,65 @@ class InventoryCrawler:
 
     def _ensure_menu_visible(self):
         """
-        Ensures we are in default content and menu is visible.
+        Escapes iframes and verifies sidebar visibility.
         """
-        self.driver.switch_to.default_content()
         try:
-             # Basic check to see if we can find any menu-like structure
-             # Using a broad union selector for improved detection
-             Waits.wait_for_visibility(self.driver, self.menu_root_selector, timeout=5)
-             return True
+            self.driver.switch_to.default_content()
+            Waits.wait_for_visibility(self.driver, self.side_menu_selector, timeout=5)
+            return True
         except:
-             logger.warning("Main menu not immediately visible.")
+             logger.warning("Sidebar not found or not visible.")
              return False
+
+    def _get_sidebar_element(self):
+        try:
+            return self.driver.find_element(*self.side_menu_selector)
+        except:
+            return None
 
     def _crawl_level(self, parent_chain):
         level = len(parent_chain) + 1
         logger.info(f"Scanning Level {level} | Context: {parent_chain}")
         
-        # 1. SCAN PHASE: Get Text Identifiers
+        # 1. SCAN PHASE: Get Text Identifiers (Scoped to Sidebar)
         item_identifiers = []
         try:
             self._ensure_menu_visible()
-            # Find all visible links in the menu area
-            # We assume menu is on default content
-            potential_links = self.driver.find_elements(By.CSS_SELECTOR, "nav a, #menu a, .sidebar a, ul.nav a")
+            sidebar = self._get_sidebar_element()
             
-            for link in potential_links:
-                 try:
-                     if link.is_displayed():
-                         text = link.text.strip()
-                         if text:
-                             # Check Uniqueness (Path + Text)
-                             unique_id = " -> ".join(parent_chain + [text])
-                             if unique_id not in self.visited_ids:
-                                 item_identifiers.append(text)
-                 except:
-                     pass # Stale element during scan, ignore
+            if sidebar:
+                # Find links ONLY within the sidebar
+                # We try to be smart: if Level 1, find direct children? 
+                # For generic robustness, we find ALL visible links and filter by what hasn't been visited?
+                # Or better: We find visible links. If hierarchy is strict `ul > li > a`, we could use that.
+                # Let's use visible links for now but filter aggressively.
+                
+                # Exclude common non-menu items explicitly if needed
+                potential_links = sidebar.find_elements(By.TAG_NAME, "a")
+                
+                for link in potential_links:
+                     try:
+                         if link.is_displayed():
+                             text = link.text.strip()
+                             # Exclude empty or obviously wrong texts
+                             if text and text not in ["", "Toggle navigation", "Ayuda"]: 
+                                 unique_id = " -> ".join(parent_chain + [text])
+                                 
+                                 # Heuristic: If we are deep (level > 1), ensure this link "belongs" to current parent?
+                                 # Hard to know without strict DOM hierarchy. 
+                                 # For robust crawling, we assume if it's visible in sidebar and new, it's valid.
+                                 
+                                 if unique_id not in self.visited_ids:
+                                     # Avoid re-clicking parents?
+                                     if text not in parent_chain: 
+                                        item_identifiers.append(text)
+                     except:
+                         pass
         except Exception as e:
             logger.error(f"Scan failed: {e}")
             return
 
-        logger.info(f"Items to process: {item_identifiers}")
+        logger.info(f"Items to process at Level {level}: {item_identifiers}")
 
         # 2. PROCESS PHASE
         for text in item_identifiers:
@@ -80,99 +100,110 @@ class InventoryCrawler:
                 continue
             
             self.visited_ids.add(unique_id)
+            safe_text_filename = "".join([c if c.isalnum() else "_" for c in text])
             
             entry = {
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "menu_level_1": parent_chain[0] if len(parent_chain) > 0 else text,
                 "menu_level_2": parent_chain[1] if len(parent_chain) > 1 else (text if len(parent_chain)==1 else ""),
-                "menu_text": text,
-                "status": "PENDING"
+                "item_text": text,
+                "status": "PENDING",
+                "selector_hint": f"Sidebar -> {text}",
+                "error_type": "",
+                "error": ""
             }
             
             try:
-                # 2.1 Re-Find Element (Fresh)
+                # 2.1 Re-Find Element (Fresh & Scoped)
                 logger.info(f"Processing: {text}")
                 self._ensure_menu_visible()
+                sidebar = self._get_sidebar_element()
                 
-                # Robust partial text match
-                xpath = f"//a[contains(text(), '{text}')]"
-                element = WebDriverWait(self.driver, 5).until(
+                # Scoped XPath within sidebar
+                # "descendant::a" ensures we look inside sidebar
+                xpath = f".//a[contains(text(), '{text}')]"
+                
+                element = WebDriverWait(sidebar, 5).until(
                     EC.element_to_be_clickable((By.XPATH, xpath))
                 )
                 
+                # Pre-Click Screenshot
+                take_screenshot(self.driver, f"L{level}_before_{safe_text_filename}")
+
                 # 2.2 Robust Click
                 if self.actions.robust_click(element):
-                    time.sleep(3) # Wait for UI reaction
+                    time.sleep(3) # Wait for animation/load
                     
-                    # 2.3 Check Result
-                    # A) Did URL change significantly?
-                    # B) Did an iframe appear?
-                    # C) Did submenu expand?
-                    
+                    # Post-Click Screenshot
+                    take_screenshot(self.driver, f"L{level}_after_{safe_text_filename}")
+
+                    # 2.3 Analyze Result
                     if self._check_iframe_loaded():
                         entry['status'] = "OK"
-                        entry['type'] = "Module (Iframe)"
-                        # Go back to menu context
+                        entry['action_type'] = "Module Load (Iframe)"
+                        entry['url_after_click'] = self.driver.current_url
+                        # Recovery: Switch back to default content to continue menu
                         self.driver.switch_to.default_content()
-                        # If module took full screen or navigated, we might need to restore state??
-                        # Usually ERPs with iframes keep the menu on the side (default content).
-                        # So we might just need to click next item.
-                        # But if it navigated, we need recovery.
                         
                     elif self._did_navigate_away():
                         entry['status'] = "OK"
-                        entry['type'] = "Link (Navigate)"
+                        entry['action_type'] = "Page Navigation"
+                        entry['url_after_click'] = self.driver.current_url
+                        # Recovery: Back + State Restore
                         self.driver.back()
                         self._recover_state(parent_chain)
                         
                     else:
-                        # Maybe submenu expanded?
-                        # Check if new items are visible that match 'level+1' criteria?
-                        # For recursion simplicity, we just recurse if we suspect it's a folder.
-                        # How to know? 
-                        # We blindly recurse. If scan finds nothing new, it returns quickly.
-                        # Optimization: Check if 'expanded' class exists on parent <li>?
+                        # Accordion Expansion?
+                        # If we are here, likely the menu just expanded.
                         entry['status'] = "OK"
-                        entry['type'] = "Submenu/Action"
+                        entry['action_type'] = "Menu Expansion"
+                        entry['url_after_click'] = self.driver.current_url
+                        
+                        # Recurse: Look for new items (children)
+                        # We pass the new chain.
                         self._crawl_level(parent_chain + [text])
 
                 else:
                      entry['status'] = "FAIL"
-                     entry['error'] = "Click failed"
-                     take_screenshot(self.driver, f"fail_click_{text}")
+                     entry['error_type'] = "ClickFailure"
+                     entry['error'] = "Robust click returned False"
+                     take_screenshot(self.driver, f"fail_click_{safe_text_filename}")
 
             except Exception as e:
-                logger.error(f"Error processing {text}: {e}")
+                err_type = type(e).__name__
+                err_msg = str(e)
+                logger.error(f"Error processing {text}: {err_type} - {err_msg}")
                 entry['status'] = "FAIL"
-                entry['error'] = str(e)
-                take_screenshot(self.driver, f"error_{text}")
-                # Try recovery
+                entry['error_type'] = err_type
+                entry['error'] = err_msg
+                take_screenshot(self.driver, f"error_{safe_text_filename}")
                 self._recover_state(parent_chain)
 
             self.inventory_data.append(entry)
 
     def _check_iframe_loaded(self):
-        """
-        Checks if a content iframe allows switching.
-        """
         try:
-            # Common iframe names/ids
             iframe = self.driver.find_element(By.CSS_SELECTOR, "iframe")
-            self.driver.switch_to.frame(iframe)
-            # If successful, we assume content loaded.
-            # Optional: Check for body/div
-            logger.info("  -> Iframe detected and switched.")
-            return True
+            if iframe.is_displayed():
+                self.driver.switch_to.frame(iframe)
+                # Check for some content?
+                logger.info("  -> Iframe detected.")
+                return True
+            return False
         except:
             return False
             
     def _did_navigate_away(self):
-        return Config.URL_LOGIN not in self.driver.current_url and "wf_login" not in self.driver.current_url
+        try:
+            # Check if sidebar is GONE
+            self.driver.find_element(*self.side_menu_selector)
+            return False
+            # Or check URL whitelist?
+        except:
+            return True
 
     def _recover_state(self, parent_chain):
-        """
-        Restores menu state by clicking parents in order.
-        """
         if not parent_chain:
             return
         
@@ -182,8 +213,10 @@ class InventoryCrawler:
         
         for p_text in parent_chain:
             try:
-                xpath = f"//a[contains(text(), '{p_text}')]"
-                el = self.driver.find_element(By.XPATH, xpath)
+                # Find parent in sidebar
+                sidebar = self._get_sidebar_element()
+                xpath = f".//a[contains(text(), '{p_text}')]"
+                el = sidebar.find_element(By.XPATH, xpath)
                 if el.is_displayed():
                     self.actions.robust_click(el)
                     time.sleep(1)
