@@ -1,6 +1,8 @@
 import time
 from selenium.webdriver.common.by import By
-from selenium.common.exceptions import StaleElementReferenceException, ElementClickInterceptedException, NoSuchElementException
+from selenium.common.exceptions import StaleElementReferenceException, ElementClickInterceptedException, NoSuchElementException, TimeoutException
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from utils.logger import logger
 from utils.safe_actions import SafeActions
 from utils.waits import Waits
@@ -11,12 +13,12 @@ class InventoryCrawler:
     def __init__(self, driver):
         self.driver = driver
         self.actions = SafeActions(driver)
-        self.visited_ids = set() # To track visited items (by text path)
+        self.visited_ids = set() # To track visited items (by unique path ID)
         self.inventory_data = []
         self.menu_root_selector = None
 
     def run(self):
-        logger.info("Starting Inventory Crawl...")
+        logger.info("Starting Inventory Crawl (Dynamic Mode)...")
         
         # 1. Detect Menu
         menu_element = self._detect_menu_root()
@@ -70,181 +72,160 @@ class InventoryCrawler:
 
     def _recover_state(self, parent_chain):
         """
-        Re-navigates to the specific submenu depth.
-        parent_chain: List of texts of parent items to click.
+        Re-navigates to the specific submenu depth by re-clicking parents.
+        Crucial for dynamic apps that reset state on back navigation.
         """
         if not parent_chain:
-            return True
+            # Just ensure menu root is visible
+            return self._detect_menu_root() is not None
             
         logger.info(f"Recovering state: {' -> '.join(parent_chain)}")
         
-        # Ensure we are at menu root (refresh might be needed if full page reload happened)
-        # Assuming we can just click through from current page top
-        
-        current_context_selector = self.menu_root_selector
+        # Ensure we wait for page to stabilize
+        time.sleep(2)
         
         for parent_text in parent_chain:
-            # Find parent item in current context
-            found = False
+            # Try to find and click the parent
             try:
-                # Find all potential items
-                # Depending on implementation, we look for links containing text
-                # We use a broad generic locator
-                items = self.driver.find_elements(By.XPATH, f"//a[contains(text(), '{parent_text}')] | //span[contains(text(), '{parent_text}')]")
+                # XPath to find link with exact or partial text
+                xpath = f"//a[contains(text(), '{parent_text}')] | //span[contains(text(), '{parent_text}')]"
                 
-                for item in items:
-                    if item.is_displayed() and parent_text in item.text:
-                        item.click()
-                        time.sleep(1) # Small wait for expand animation
-                        found = True
-                        break
+                element = WebDriverWait(self.driver, 5).until(
+                    EC.visibility_of_element_located((By.XPATH, xpath))
+                )
+                
+                # Check if visible and click to expand
+                if element.is_displayed():
+                    element.click()
+                    time.sleep(1) # Wait for animation/load
+                
             except Exception as e:
-                logger.warning(f"Error recovering state for {parent_text}: {e}")
-            
-            if not found:
-                logger.error(f"Could not recover state for parent: {parent_text}")
+                logger.warning(f"Error recovering parent '{parent_text}': {e}")
                 return False
                 
         return True
 
     def _crawl_level(self, parent_chain):
         """
-        Crawls items at current level.
+        Robust Crawling:
+        1. Scan: Identify all candidates (Text) at this level.
+        2. Loop: Process each candidate by re-finding it.
         """
         level = len(parent_chain) + 1
-        logger.info(f"Crawling Level {level} | Parents: {parent_chain}")
+        logger.info(f"Scanning Level {level} | Context: {parent_chain}")
         
-        # 1. Identify items in the current 'active' menu view
-        # This is tough without selectors. We assume expanded items show children.
-        # We need to find items that match the current context.
-        # Simplification: We look for all visible links in the menu container 
-        # that are NOT in our visited list.
-        
+        # --- PHASE 1: SCAN ---
+        item_identifiers = []
         try:
-            # Re-find menu root to avoid stale element
-            menu_root = self.driver.find_element(*self.menu_root_selector)
-            
-            # Find all visible links (a) or clickables (span with onclick?)
-            # Constrain to visible
-            items = menu_root.find_elements(By.TAG_NAME, "a")
-        except StaleElementReferenceException:
-            logger.warning("Stale menu root. Retrying detection...")
-            self._detect_menu_root()
-            menu_root = self.driver.find_element(*self.menu_root_selector)
-            items = menu_root.find_elements(By.TAG_NAME, "a")
-            
-        # Filter items: visible and non-empty text
-        visible_items = []
-        for i in items:
-            try:
-                if i.is_displayed() and i.text.strip():
-                    visible_items.append(i)
-            except:
-                pass
-
-        # Check which unique items we haven't processed
-        # We process by Index logic to avoid stale references during iteration,
-        # but indices shift if menus expand.
-        # Strategy: Extract needed info (text, selector hint) then process one by one, 
-        # re-acquiring the element.
-        
-        item_definitions = []
-        for index, item in enumerate(visible_items):
-            try:
-                text = item.text.strip()
-                # Unique ID for this crawl: Path + Text
-                unique_id = " -> ".join(parent_chain + [text])
+            # Wait for menu root visibility
+            if self.menu_root_selector:
+                WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located(self.menu_root_selector)
+                )
+                menu_root = self.driver.find_element(*self.menu_root_selector)
                 
-                if unique_id not in self.visited_ids:
-                    item_definitions.append({
-                        "text": text,
-                        "unique_id": unique_id,
-                        # We try to get a CSS selector or XPath relative
-                        "xpath_hint": self._get_xpath_hint(item)
-                    })
-            except:
-                pass
+                # Find all logical items (links)
+                links = menu_root.find_elements(By.TAG_NAME, "a")
+                
+                # Filter visible and meaningful
+                for link in links:
+                    if link.is_displayed():
+                        text = link.text.strip()
+                        if text:
+                            # Verify if we have visited this exact path
+                            unique_id = " -> ".join(parent_chain + [text])
+                            if unique_id not in self.visited_ids:
+                                item_identifiers.append({
+                                    "text": text,
+                                    "unique_id": unique_id
+                                })
+            else:
+                 logger.error("Menu root selector missing during scan.")
+                 return
 
-        logger.info(f"Found {len(item_definitions)} new items at this state.")
+        except Exception as e:
+            logger.error(f"Scan failed at level {level}: {e}")
+            return
 
-        for item_def in item_definitions:
+        logger.info(f"Found {len(item_identifiers)} items to process at this level.")
+
+        # --- PHASE 2: PROCESS ---
+        for item_def in item_identifiers:
             text = item_def['text']
             unique_id = item_def['unique_id']
-            xpath = item_def['xpath_hint']
+            
+            # Skip if visited (concurrency safety)
+            if unique_id in self.visited_ids:
+                continue
             
             self.visited_ids.add(unique_id)
             
-            # Record preliminary data
+            logger.info(f"Processing Item: {text}")
+            
             entry = {
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "menu_level_1": parent_chain[0] if len(parent_chain) > 0 else text,
                 "menu_level_2": parent_chain[1] if len(parent_chain) > 1 else (text if len(parent_chain)==1 else ""),
                 "menu_level_3": parent_chain[2] if len(parent_chain) > 2 else (text if len(parent_chain)==2 else ""),
                 "item_text": text,
-                "selector_hint": xpath,
+                "selector_hint": f"//a[contains(text(), '{text}')]",
                 "action_type": "click",
                 "status": "PENDING"
             }
             
-            # --- ACTION PHASE ---
-            # 1. Ensure state (re-navigate if we are not sure)
-            # Optimization: If we just processed an item that navigated away, we MUST recover.
-            # If the previous item was just a submenu expand, we might be OK, but safer to check.
+            navigated = False
             
-            # We will always attempt to find the element again.
             try:
-                current_element = self.driver.find_element(By.XPATH, xpath)
+                # 1. Re-Find Element (Stale-proof strategy)
+                xpath = f"//a[contains(text(), '{text}')]" 
                 
-                # Check if it is a submenu or link
-                # Heuristic: href is empty or '#', or has arrow icon
-                is_submenu = False
-                href = current_element.get_attribute("href")
-                if not href or href.endswith("#") or "javascript" in href:
-                    is_submenu = True
+                element = WebDriverWait(self.driver, 5).until(
+                    EC.element_to_be_clickable((By.XPATH, xpath))
+                )
                 
-                # Click
-                logger.info(f"Clicking: {text}")
-                current_element.click()
-                time.sleep(2) # Wait for reaction
+                # Check attributes before click (heuristic for submenu vs link)
+                href = element.get_attribute("href")
+                is_submenu = (href is None) or (href == "") or ("#" in href) or ("javascript" in href)
                 
-                # Check result
-                new_url = self.driver.current_url
-                entry['url_after_click'] = new_url
+                # 2. Click
+                element.click()
                 
-                if new_url != Config.URL_LOGIN and "wf_login" not in new_url: # Basic check
-                    entry['status'] = "OK"
+                # 3. Wait for reaction
+                time.sleep(3) 
+                
+                # 4. Check Result
+                current_url = self.driver.current_url
+                
+                if current_url != Config.URL_LOGIN and "wf_login" not in current_url:
+                     entry['status'] = "OK"
+                     entry['url_after_click'] = current_url
+                     
+                     if is_submenu:
+                         # It looks like a submenu, check if new items appeared
+                         # Recurse
+                         self._crawl_level(parent_chain + [text])
+                     else:
+                         # Likely navigated to a module
+                         navigated = True
+
                 else:
                     entry['status'] = "FAIL"
-                    entry['error'] = "Logged out or invalid state"
-
-                self.inventory_data.append(entry)
-
-                if is_submenu:
-                    # Recurse
-                    # Assume menu expanded.
-                     self._crawl_level(parent_chain + [text])
-                else:
-                    # It was a link, likely navigated or changed usage frame.
-                    # We need to Go Back or Reset State for the next item.
-                    # If URL changed significantly, go back
-                    if new_url != Config.URL_LOGIN:
-                        self.driver.back()
-                        time.sleep(1)
-                        # Re-open parents
-                        self._recover_state(parent_chain)
+                    entry['error'] = "Logged out or invalid URL"
 
             except Exception as e:
-                logger.error(f"Error processing {text}: {e}")
+                logger.error(f"Error clicking {text}: {e}")
                 entry['status'] = "FAIL"
                 entry['error'] = str(e)
-                self.inventory_data.append(entry)
-                # Try to recover state just in case
-                self._recover_state(parent_chain)
-
-    def _get_xpath_hint(self, element):
-        """Helper to generate a unique-ish xpath"""
-        try:
-            text = element.text.strip()
-            return f"//a[contains(text(), '{text}')]"
-        except:
-            return "//a"
+            
+            self.inventory_data.append(entry)
+            
+            # --- PHASE 3: RECOVER ---
+            if navigated:
+                logger.info("Navigated away. Returning to menu...")
+                self.driver.back()
+                time.sleep(2) # Wait for page load
+                
+                # Recover state (re-open parents)
+                if not self._recover_state(parent_chain):
+                    logger.error(f"Failed to recover state after {text}. Stopping this branch.")
+                    return 
