@@ -45,9 +45,8 @@ class LoginFlow:
         print("="*60 + "\n")
 
         # 3.1 Select Sucursal (Pre-Auth)
-        if not self.select_sucursal_target():
-             logger.error("Failed to select Sucursal. Aborting Login.")
-             return False
+        # REMOVED per User Request: Sucursal selection is not needed.
+        # if not self.select_sucursal_target(): ...
 
         # 3.2 Click Login
         logger.info("Clicking Login button...")
