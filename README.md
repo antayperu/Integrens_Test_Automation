@@ -1,48 +1,90 @@
-# Integrens Test Automation
+# PROYECTO DE AUTOMATIZACIÓN QA: Integrens ERP
 
-## Objetivo
-Proyecto de automatización de QA para inventariar la navegación funcional y mapeo de UI de la aplicación ERP "Integrens".
-Genera archivos CSV/JSON listos para crear Casos de Prueba.
+**Proyecto:** Integrens_Test_Automation  
+**Objetivo:** Inventariar la navegación funcional y mapear la interfaz de usuario (UI) de la aplicación ERP "Integrens" para generar Casos de Prueba estructurados.
 
-## Requisitos
-- Python 3.11+
-- Google Chrome instalado
+---
 
-## Instalación
+## 🚀 Quick Start (Inicio Rápido)
+Si ya tienes todo configurado, sigue estos pasos para ejecutar la prueba:
 
-1. Crear un entorno virtual (recomendado):
+1. **Abre la terminal** en la carpeta del proyecto.
+2. **Activa el entorno virtual**:
+   - PowerShell: `.\venv\Scripts\Activate.ps1`
+   - CMD: `.\venv\Scripts\activate.bat`
+3. **Ejecuta el robot**:
    ```bash
-   python -m venv venv
-   .\venv\Scripts\activate
+   python run_inventory.py
    ```
+4. **Login**: Espera a que se abra el navegador. Ingresa el CAPTCHA manualmente y dale Login.
+5. **Confirma**: Regresa a esta terminal y presiona **ENTER** cuando veas el Dashboard.
+6. **Resultados**: Al finalizar, revisa la carpeta `outputs/`.
 
-2. Instalar dependencias:
-   ```bash
-   pip install -r requirements.txt
-   ```
+---
 
-## Configuración (.env)
-**IMPORTANTE**: Debes crear un archivo `.env` en la raíz del proyecto para tus credenciales. Este archivo NO se sube al repositorio.
+## 📋 Requisitos Previos
+- **Python 3.11** o superior instalado.
+- **Google Chrome** instalado.
+- Acceso a internet para conectar al ERP Integrens.
 
-Contenido de `.env`:
-```ini
-INTEGRENS_USER=tu_usuario
-INTEGRENS_PASS=tu_clave
-```
+## ⚙️ Instalación y Configuración (Solo la primera vez)
 
-## Ejecución
+### 1. Crear Entorno Virtual
+Para mantener las dependencias ordenadas, configura un entorno virtual:
 ```bash
-python run_inventory.py
+python -m venv venv
 ```
 
-## Flujo de Login y CAPTCHA
-La aplicación tiene un CAPTCHA que NO se automatiza.
-1. El script abrirá el navegador y llenará usuario/clave.
-2. El script se PAUSARÁ y te pedirá en la consola que resuelvas el CAPTCHA manualmente.
-3. Una vez logueado, presiona ENTER en la consola para continuar.
-4. El script validará el login y comenzará el inventario.
+### 2. Activar Entorno
+**Windows PowerShell:**
+```powershell
+.\venv\Scripts\Activate.ps1
+```
+**Windows Command Prompt (CMD):**
+```cmd
+.\venv\Scripts\activate.bat
+```
 
-## Outputs
-Los resultados se guardan en la carpeta `outputs/`:
-- `inventory.csv` / `inventory.json`: Mapeo de la UI.
-- `logs/`: Logs de ejecución.
+### 3. Instalar Dependencias
+Una vez activado el entorno, instala las librerías necesarias:
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Configurar Credenciales (.env)
+**MUY IMPORTANTE:** Por seguridad, las claves no están en el código.
+1. Crea un archivo nuevo llamado `.env` en la raíz del proyecto.
+2. Pega el siguiente contenido reemplazando con tus datos reales:
+```ini
+INTEGRENS_USER=tu_usuario_aqui
+INTEGRENS_PASS=tu_clave_secreta_aqui
+```
+
+---
+
+## ✋ Manejo del CAPTCHA
+Este proyecto **NO automatiza ni rompe el CAPTCHA** por políticas de seguridad y buenas prácticas.
+
+**El Flujo es Semi-Automático:**
+1. El robot abrirá el navegador y llenará tu Usuario y Contraseña automáticamente.
+2. **El robot se DETENDRÁ**. Verás un aviso en la consola con un icono de alerta ⚠️.
+3. **TU ACCIÓN:** Debes ir al navegador, leer el CAPTCHA y escribirlo manualmente. Luego haz clic en el botón de **Ingresar**.
+4. Una vez que hayas entrado exitosamente al sistema (Dashboard visible), vuelve a la consola (pantalla negra) y presiona la tecla **ENTER**.
+5. El robot tomará el control nuevamente y comenzará a navegar por los menús.
+
+---
+
+## 📂 Resultados (Outputs)
+Toda la información recolectada se guarda automáticamente en la carpeta `outputs/`.
+
+| Archivo | Descripción |
+| :--- | :--- |
+| **inventory.csv** | Archivo Excel/CSV con el listado de todos los menús, botones y enlaces encontrados. Listo para importar a test cases. |
+| **inventory.json** | Formato técnico para integración con otros sistemas. |
+| **logs/execution.log** | Registro técnico de todo lo que hizo el robot (útil para revisar errores). |
+
+---
+
+## 🔒 Notas de Seguridad
+- El archivo `.env` está ignorado por Git para que tus claves nunca se suban a la nube.
+- El proyecto solo lee información pública de la UI, no modifica datos en el ERP.
