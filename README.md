@@ -70,7 +70,7 @@ Este proyecto **NO automatiza ni rompe el CAPTCHA** por políticas de seguridad 
 2. **El robot se DETENDRÁ**. Verás un aviso en la consola con un icono de alerta ⚠️.
 3. **TU ACCIÓN:** Debes ir al navegador, leer el CAPTCHA y escribirlo manualmente. Luego haz clic en el botón de **Ingresar**.
 4. Una vez que hayas entrado exitosamente al sistema (Dashboard visible), vuelve a la consola (pantalla negra) y presiona la tecla **ENTER**.
-5. El robot tomará el control nuevamente y comenzará a navegar por los menús.
+5. El robot seleccionará automáticamente la **Sucursal** (DACTA SAC 2021...) y comenzará a navegar.
 
 ---
 

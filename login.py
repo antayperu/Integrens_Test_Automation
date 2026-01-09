@@ -2,7 +2,9 @@ from selenium.webdriver.common.by import By
 from config import Config
 from utils.logger import logger
 from utils.safe_actions import SafeActions
-from utils.waits import Waits
+from selenium.webdriver.support.ui import Select
+import time
+from utils.helpers import take_screenshot
 
 class LoginFlow:
     def __init__(self, driver):
@@ -68,3 +70,75 @@ class LoginFlow:
         
         logger.info(f"Login successful. Current URL: {current_url}")
         return True
+    def select_sucursal_target(self):
+        """
+        Post-login: Auto-selects the required Sucursal.
+        Target: "DACTA SAC 2021 , DIVISION TI, OFI. LIMA"
+        """
+        logger.info("--- Starting Auto-Selection of Sucursal ---")
+        
+        # Exact target and keywords for fallback
+        TARGET_FULL = "DACTA SAC 2021 , DIVISION TI, OFI. LIMA"
+        KEYWORDS = ["DIVISION TI", "OFI. LIMA"]
+        
+        try:
+            # Give time for Dashboard/Combos to load after login
+            time.sleep(3)
+            
+            # Strategy 1: Find standard <select> elements
+            selects = self.driver.find_elements(By.TAG_NAME, "select")
+            logger.info(f"Found {len(selects)} visible <select> elements.")
+            
+            for element in selects:
+                if not element.is_displayed():
+                    continue
+                    
+                try:
+                    dropdown = Select(element)
+                    
+                    # Search options
+                    found_option = None
+                    for opt in dropdown.options:
+                        text = opt.text.strip().upper()
+                        # Strict check or Loose check
+                        if TARGET_FULL.upper() in text:
+                            found_option = opt
+                            break
+                        
+                        # Fallback check
+                        if all(k in text for k in KEYWORDS):
+                            found_option = opt
+                            break
+                    
+                    if found_option:
+                        logger.info(f"Found target Sucursal in dropdown: '{found_option.text}'")
+                        
+                        # If already selected, skip
+                        if found_option.is_selected():
+                            logger.info("Target Sucursal is already selected.")
+                            return True
+                            
+                        # Select it
+                        dropdown.select_by_visible_text(found_option.text)
+                        logger.info("Selected Sucursal. Waiting for page reload...")
+                        time.sleep(3) # Wait for potential refresh
+                        
+                        # Verify
+                        if found_option.is_selected():
+                             logger.info("CONFIRMED: Sucursal selected successfully.")
+                             return True
+                        else:
+                             # Re-read to check if it stuck
+                             pass
+
+                except Exception as ex:
+                    logger.debug(f"Skipping a select element: {ex}")
+                    
+            logger.warning("Could not find target Sucursal in any standard <select>.")
+            take_screenshot(self.driver, "fail_select_sucursal")
+            return False
+
+        except Exception as e:
+            logger.error(f"Error during Sucursal selection: {e}")
+            take_screenshot(self.driver, "error_sucursal")
+            return False
