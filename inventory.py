@@ -63,86 +63,79 @@ class InventoryCrawler:
 
     def _parse_sidebar_structure(self, sidebar_element):
         """
-        Parses the visible DOM hierarchy to infer L1/L2 items.
-        Assumes standard list structure (ul/li).
+        Parses the visible DOM hierarchy to infer L1/L2/L3 items based on nesting depth.
+        Uses ancestor counting to determine indentation levels.
         """
         try:
-            # Find all List Items (li) that are potentially menu items
-            # Common structure: sidebar > ul > li (Level 1) > ul > li (Level 2)
-            
-            # Strategy: Find all visible links (a) and determine their depth based on parents.
             links = sidebar_element.find_elements(By.TAG_NAME, "a")
-            
             logger.info(f"Scanning {len(links)} potential links in sidebar...")
             
-            current_l1 = ""
+            items_raw = []
             
+            # 1. Collect Valid Items and Measure Depth
             for link in links:
                 if not link.is_displayed():
                     continue
                     
                 text = link.text.strip()
-                if not text or text in ["Toggle navigation", "Ayuda", "Sign out", "Salir"]:
+                # Exclude common noise
+                if not text or text in ["Toggle navigation", "Ayuda", "Sign out", "Salir", "Usuario", "admin"]:
                     continue
 
-                # Determine Level by checking parents
-                # Heuristic: 
-                # If parent is 'nav' or top 'ul' -> Level 1
-                # If parent is 'li' inside nested 'ul' -> Level 2
-                
-                # We can check specific class names if known, or just use indentation logic?
-                # Using XPath to count 'ul' ancestors is reliable.
-                try:
-                    # Count how many UL ancestors exist for this element
-                    # Note: Selenium doesn't give simple ancestor count easily without iterate.
-                    # We can assume: 
-                    # If it has a 'fa-angle-down' or similar icon, it MIGHT be a parent.
-                    # If the click expands something...
-                    
-                    # Simpler Heuristic for Integrens:
-                    # Does it have a submenu sibling? 
-                    # (This is hard to detect passively reliably without specific DOM knowledge)
-                    
-                    # Let's assume sequential reading:
-                    # PROBABLY: L1 items are followed by their L2 children.
-                    # But we need to know WHICH is which.
-                    
-                    # Let's try to detect nesting via DOM.
-                    # Check if 'ul' parent has class 'sidebar-menu' (Root) or 'treeview-menu' (Nested)?
-                    parent_ul = link.find_element(By.XPATH, "./ancestor::ul[1]")
-                    parent_classes = parent_ul.get_attribute("class")
-                    
-                    level = 1
-                    if "treeview-menu" in parent_classes or "dropdown-menu" in parent_classes or "submenu" in parent_classes:
-                        level = 2
-                    # Fallback: if it's inside a 'li' that is inside another 'ul' that is NOT the root?
-                    
-                    entry = {
-                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                        "menu_level_1": "",
-                        "menu_level_2": "",
-                        "item_text": text,
-                        "status": "CAPTURED",
-                        "notes": f"Detected at Level {level}"
-                    }
-                    
-                    if level == 1:
-                        current_l1 = text
-                        entry["menu_level_1"] = text
-                    else:
-                        entry["menu_level_1"] = current_l1
-                        entry["menu_level_2"] = text
-                        
-                    self.inventory_data.append(entry)
+                # Calculate Depth: Number of 'ul' ancestors
+                # This is a robust proxy for menu nesting in bootstrap/standard navs
+                depth = len(link.find_elements(By.XPATH, "./ancestor::ul"))
+                items_raw.append({
+                    "text": text,
+                    "depth": depth
+                })
 
-                except Exception as ex:
-                    logger.debug(f"Parsing item error: {ex}")
-                    # Fallback add
-                    self.inventory_data.append({
-                        "item_text": text,
-                        "status": "CAPTURED_RAW",
-                        "error": str(ex)
-                    })
+            if not items_raw:
+                logger.warning("No visible items found in sidebar execution.")
+                return
+
+            # 2. Normalize Depth (Find minimum depth to be Level 1)
+            min_depth = min(item['depth'] for item in items_raw)
+            logger.info(f"Depth analysis: Min Depth = {min_depth} (Level 1)")
+
+            # 3. Build Hierarchy
+            current_l1 = ""
+            current_l2 = ""
+            
+            for item in items_raw:
+                text = item['text']
+                raw_depth = item['depth']
+                
+                # Calculate relative level (1-based)
+                level = raw_depth - min_depth + 1
+                
+                entry = {
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "menu_level_1": "",
+                    "menu_level_2": "",
+                    "menu_level_3": "",
+                    "item_text": text,
+                    "status": "CAPTURED",
+                    "notes": f"Depth {raw_depth} -> Level {level}"
+                }
+                
+                if level == 1:
+                    current_l1 = text
+                    current_l2 = "" # Reset L2 when new L1 starts
+                    entry["menu_level_1"] = text
+                    
+                elif level == 2:
+                    current_l1 = current_l1 if current_l1 else "Unknown"
+                    current_l2 = text
+                    entry["menu_level_1"] = current_l1
+                    entry["menu_level_2"] = text
+                    
+                elif level >= 3:
+                     entry["menu_level_1"] = current_l1
+                     entry["menu_level_2"] = current_l2
+                     entry["menu_level_3"] = text
+                
+                self.inventory_data.append(entry)
 
         except Exception as e:
-            logger.error(f"Error parsing sidebar DOM: {e}")
+            logger.error(f"Error parsing sidebar structure: {e}")
